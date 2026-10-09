@@ -155,12 +155,16 @@ The classical baseline runs through **the repository's own code path** — the s
 
 **Noise-free (σ<sub>n</sub> = 0), Kodak24 crops — the clean comparison:**
 
-| Method | Prior | NFE | PSNR | LPIPS |
+| Dataset | Method | NFE | PSNR | LPIPS |
 |---|---|---|---|---|
-| Classical CFA interpolation (OpenCV edge-aware) | none | — | 29.1667 | 0.1365 |
-| **DiffPIR + Bayer mask** (λ = 1, ζ = 1) | pretrained diffusion | 100 | **34.2260** | **0.0800** |
+| Kodak24 | Classical CFA interpolation (edge-aware) | — | 29.1667 | 0.1365 |
+| Kodak24 | **DiffPIR + Bayer mask** (λ = 1, ζ = 1) | 100 | **34.2260** | **0.0800** |
+| McMaster | Classical CFA interpolation (edge-aware) | — | 31.5691 | 0.0834 |
+| McMaster | **DiffPIR + Bayer mask** (λ = 1, ζ = 1) | 100 | **34.7081** | 0.0807 |
 
-**+5.06 dB and −0.057 LPIPS (−41 %) over interpolation**, on the same 24 crops. On the McMaster crops the classical baseline scores 31.5691 / 0.0834; the matching DiffPIR σ<sub>n</sub> = 0 run on that set has not been made yet. (λ is not tuned here: at σ<sub>n</sub> = 0 the data step reduces to substituting the measured pixels, so ρ drops out — the same behaviour the paper's noise-free inpainting shows, where λ = 1 and λ = 7 agree to four decimals.)
+**The PSNR gain is consistent (+5.06 dB on Kodak24, +3.14 dB on McMaster); the perceptual gain is not.** LPIPS improves 41 % on Kodak24 but only 3 % on McMaster, where interpolation is already close. These McMaster crops carry less fine colour structure, which is where interpolation fails and a generative prior pays off — so the two numbers are consistent with each other, but **quoting the Kodak LPIPS alone would misrepresent the result**.
+
+(λ is not tuned for these rows: at σ<sub>n</sub> = 0 the data step reduces to substituting the measured pixels, so ρ drops out — the same behaviour the paper's noise-free inpainting shows, where λ = 1 and λ = 7 agree to four decimals. Both datasets therefore use λ = 1, ζ = 1 and stay comparable.)
 
 **With noise (σ<sub>n</sub> = 12.75/255), Kodak24 crops — read with care:**
 
