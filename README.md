@@ -33,7 +33,7 @@ This is a **reproduction and extension, not a new method.** No claim of state of
 
 ### 2.1 Headline numbers
 
-Evaluated on **`ffhq_val_100`** — the 100-image 256×256 FFHQ hold-out split used in the paper — with the paper's own Table 3 hyperparameters (λ, ζ). Prior: `diffusion_ffhq_10m`. Metrics: PSNR (dB) and LPIPS (AlexNet).
+Evaluated on **`ffhq_val_100`** — the 100-image 256×256 FFHQ hold-out split used in the paper — with the paper's own Table 3 hyperparameters (λ, ζ). Prior: `diffusion_ffhq_10m`. Metrics: PSNR (dB, RGB) and LPIPS (VGG backbone, as in the released code).
 
 | Task | NFE | σ<sub>n</sub> | λ / ζ | **Mine** PSNR / LPIPS | **Paper** PSNR / LPIPS | ΔPSNR | ΔLPIPS |
 |---|---|---|---|---|---|---|---|
@@ -101,7 +101,7 @@ This is a common situation in reproduction work and not a criticism of the autho
 
 ## 3. Step 2 — Bayer demosaicing extension
 
-> **Scope.** Everything below is this project's own result: the paper does not cover demosaicing, so there is no published λ / ζ to copy and no published number to match. What is *not* here is a cross-method comparison — see §3.3.
+> **Scope.** Everything below is this project's own result: the paper does not cover demosaicing, so there is no published λ / ζ to copy and no published number to match. One baseline is in place (classical CFA interpolation, §3.3); the PnP-CNN baseline that would isolate the prior is not — §3.3 says exactly what is missing.
 
 ### 3.1 Formulation
 
@@ -111,7 +111,9 @@ Bayer CFA demosaicing is masked restoration with a **channel-wise** mask: each p
 
 ### 3.2 Results
 
-Prior: `256x256_diffusion_uncond` (the general-image model, not the FFHQ one). Degradation: RGGB mosaic plus AWGN at σ<sub>n</sub> = 12.75/255 ≈ 0.05, added in the [-1, 1] domain and then re-masked, i.e. noise only on sampled pixels. Data: 256×256 centre crops with even-numbered origins (§4.3). Metrics: PSNR (RGB) and LPIPS (AlexNet); **SSIM is not reported — it was not computed in these runs.**
+Prior: `256x256_diffusion_uncond` (the general-image model, not the FFHQ one). Degradation: RGGB mosaic plus AWGN at σ<sub>n</sub> = 12.75/255 ≈ 0.05, added in the [-1, 1] domain and then re-masked, i.e. noise only on sampled pixels. Data: 256×256 centre crops with even-numbered origins (§4.3). Metrics: PSNR (RGB) and LPIPS (VGG); **SSIM is not reported — it was not computed in these runs.**
+
+⚠️ **These numbers are on 256×256 centre crops and are not comparable to full-resolution Kodak / McMaster figures in the demosaicing literature.** The crops deliberately take the most detailed part of each image, so any method scores lower on them than on the full frames. Comparisons are only meaningful against methods run on these same 42 crops — which is why `data/*/crops.csv` is in this repository.
 
 **Operating point: λ = 3, ζ = 1.0, 100 NFE.**
 
@@ -131,6 +133,8 @@ Sweeping the data-fidelity weight λ at ζ = 1.0 gives a single-peaked curve wit
 | PSNR | 29.2581 | 30.3022 | **30.6704** | 30.4815 | 30.1720 | 29.8508 | 29.5552 | 29.3040 | 29.0977 | 28.8538 | 28.6718 | 28.5057 |
 | LPIPS | 0.2181 | 0.1873 | **0.1842** | 0.2117 | 0.2384 | 0.2587 | 0.2751 | 0.2893 | 0.2998 | 0.3113 | 0.3186 | 0.3252 |
 
+![λ–ζ sweep: PSNR and LPIPS against the data-fidelity weight, for three values of ζ](figures/lambda-zeta-sweep.png)
+
 The paper's own σ<sub>n</sub> = 0.05 tasks use λ in **7–9** (deblurring 7–8, SR 8–9). Demosaicing lands much lower, and the mechanism is in the data step itself: with ρ = λσ²/σ<sub>k</sub>² and the closed form `(mask·y + ρ·x₀)/(mask + ρ)`, a larger λ trusts the prior over the measurement. The CFA operator is **pointwise** — every retained pixel carries its own independent noise, with no neighbourhood averaging. Deblurring and super-resolution operators average, so their effective measurement noise is lower and they can afford to lean on the prior harder. A mask gives no such cushion, so λ must be smaller.
 
 #### 3.2.2 ζ: the boundary value is the right one
@@ -145,11 +149,31 @@ The paper's own σ<sub>n</sub> = 0.05 tasks use λ in **7–9** (deblurring 7–
 
 Two things follow. **ζ\* = 1.0 is at the boundary**, matching what the paper uses for inpainting — masked degradations behave as one family, and demosaicing belongs to it. And **λ\* is coupled to ζ**: lowering ζ moves the optimum right and pushes the whole curve down, so "λ\* = 3" is meaningless quoted on its own. The two must be reported as a pair.
 
-### 3.3 Baselines: not run, and the table is omitted on purpose
+### 3.3 Baseline: classical CFA interpolation
 
-The comparison that would make this section complete is a **DPIR-style PnP baseline** (DRUNet denoiser, identical closed-form data step, same crops) plus **classical CFA interpolation**, which together isolate the prior as the only variable. Neither has been run yet, and a cross-method table built from numbers taken under different protocols is worse than no table, so none is given here. The same applies to the side-by-side figure (ground truth / CFA input / classical / PnP-CNN / DiffPIR).
+The classical baseline runs through **the repository's own code path** — the same `bayer_mask()`, the same noise injection (σ scaled in [-1, 1], seed 0, re-masked afterwards), the same `calculate_psnr` and the same VGG LPIPS — so "identical protocol" is constructed rather than asserted (`scripts/50-classical-baseline.py`).
 
-What *is* reported above is self-contained: it does not depend on any baseline.
+**Noise-free (σ<sub>n</sub> = 0), Kodak24 crops — the clean comparison:**
+
+| Method | Prior | NFE | PSNR | LPIPS |
+|---|---|---|---|---|
+| Classical CFA interpolation (OpenCV edge-aware) | none | — | 29.1667 | 0.1365 |
+| **DiffPIR + Bayer mask** (λ = 1, ζ = 1) | pretrained diffusion | 100 | **34.2260** | **0.0800** |
+
+**+5.06 dB and −0.057 LPIPS (−41 %) over interpolation**, on the same 24 crops. On the McMaster crops the classical baseline scores 31.5691 / 0.0834; the matching DiffPIR σ<sub>n</sub> = 0 run on that set has not been made yet. (λ is not tuned here: at σ<sub>n</sub> = 0 the data step reduces to substituting the measured pixels, so ρ drops out — the same behaviour the paper's noise-free inpainting shows, where λ = 1 and λ = 7 agree to four decimals.)
+
+**With noise (σ<sub>n</sub> = 12.75/255), Kodak24 crops — read with care:**
+
+| Method | Prior | Denoising | PSNR | LPIPS |
+|---|---|---|---|---|
+| Classical CFA interpolation (bilinear) | none | **none** | 25.4279 | 0.3670 |
+| **DiffPIR + Bayer mask** (λ = 3, ζ = 1) | pretrained diffusion | joint | **30.6704** | **0.1842** |
+
+The 5.24 dB gap here is **not** a prior-versus-prior result: plain interpolation has no denoising at all, so the noise passes straight through. The honest reading is that σ > 0 requires a denoiser in the baseline — BM3D after interpolation, or the DRUNet PnP solver below.
+
+**Still missing — a DPIR-style PnP baseline**: the DRUNet denoiser in the *same* closed-form data step, on the *same* crops, which is the comparison that isolates the prior as the only variable (and prices the diffusion prior's NFE cost against a discriminative one). That is roughly a half-day of work and has not been done; no number here stands in for it. The side-by-side figure (ground truth / CFA input / classical / PnP-CNN / DiffPIR) waits on the same thing.
+
+> **Implementation note worth keeping.** OpenCV's Bayer constants are named off-by-one relative to sensor convention: an RGGB mosaic needs `COLOR_BayerBG2BGR`. The script does not rely on remembering that — it tries all four pattern codes on the first image and reports the table. The three wrong codes land at **8–9 dB** versus 24.9 dB for the right one, which doubles as an independent check that `bayer_mask()` has the phase right. At σ<sub>n</sub> = 0.05 the script selects plain bilinear over the edge-aware variant (23.25 vs 23.13 dB on image 1): edge-adaptive interpolation amplifies noise.
 
 ### 3.4 Quality vs NFE
 
@@ -261,7 +285,7 @@ Built on **DiffPIR** by Yuanzhi Zhu, Kai Zhang, Jingyun Liang, Jiezhang Cao, Bih
 **Scope, stated plainly:**
 - This is a reproduction plus one added task. It is **not a new method and not a claim of state of the art**.
 - The diffusion models are **pretrained and used at inference time**. I did not train a diffusion model.
-- Step 1 reproduces published numbers; Step 2 is my own extension, reported on its own terms. **No cross-method baseline has been run yet**, so no comparison table is given (§3.3).
+- Step 1 reproduces published numbers; Step 2 is my own extension. It is compared against classical CFA interpolation on identical crops (§3.3); the **PnP-CNN baseline that would isolate the prior has not been run**, and §3.3 says so rather than substituting something else for it.
 
 Modifications to upstream files are confined to: the kernel-std fix (§2.3), `bayer_mask()` in `utils_inpaint.py`, `main_ddpir_demosaic.py` (a copy of `main_ddpir_inpainting.py` differing only in its import and mask), and the torch-2.13 compatibility edits in §4.5.
 
