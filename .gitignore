@@ -1,0 +1,12 @@
+# checkpoints, data and results are not redistributed — see README §4.2 / §4.3
+model_zoo/
+testsets/
+results/
+logs/
+*.pt
+*.pth
+*.png
+*.tif
+!figures/*.png
+__pycache__/
+.DS_Store
