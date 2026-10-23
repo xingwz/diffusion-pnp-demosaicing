@@ -58,7 +58,12 @@ def main():
     ap.add_argument("--testset", default="kodak24_c256")
     ap.add_argument("--sigma", type=float, default=0.0)
     ap.add_argument("--testsets", default="testsets")
+    ap.add_argument("--save-dir", default=None,
+                    help="also write <stem>_cfa.png (the masked noisy measurement) and "
+                         "<stem>_classical.png per image, for scripts/61-make-sidebyside.py")
     args = ap.parse_args()
+    if args.save_dir:
+        os.makedirs(args.save_dir, exist_ok=True)
 
     paths = sorted(glob.glob(os.path.join(args.testsets, args.testset, "*.png")))
     if not paths:
@@ -84,8 +89,15 @@ def main():
     psnrs, lps = [], []
     for p in paths:
         img_H = util.imread_uint(p, n_channels=3)
-        img_E = demosaic(degrade(img_H, args.sigma), best_code)
+        img_L = degrade(img_H, args.sigma)
+        img_E = demosaic(img_L, best_code)
         psnrs.append(util.calculate_psnr(img_E, img_H, border=0))
+
+        if args.save_dir:
+            stem = os.path.splitext(os.path.basename(p))[0]
+            util.imsave(img_E, os.path.join(args.save_dir, stem + "_classical.png"))
+            util.imsave(np.clip(img_L * 255.0, 0, 255).astype(np.uint8),
+                        os.path.join(args.save_dir, stem + "_cfa.png"))
 
         t = lambda a: torch.from_numpy(np.transpose(a, (2, 0, 1)))[None].to(device) / 255.0 * 2 - 1
         lps.append(float(loss_fn_vgg(t(img_E), t(img_H)).detach().cpu().numpy().ravel()[0]))

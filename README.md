@@ -2,6 +2,8 @@
 
 A reproduction of **DiffPIR** (Zhu et al., *Denoising Diffusion Models for Plug-and-Play Image Restoration*, CVPR Workshops / NTIRE 2023) on super-resolution, Gaussian deblurring and inpainting, plus one task the paper does not cover: **Bayer CFA demosaicing under additive noise**, formulated as channel-wise masked restoration, with its data-fidelity weight swept and its optimum explained.
 
+The extension is compared against two baselines run through the identical degradation, solver and metric path: classical CFA interpolation, and a **DPIR-style PnP-HQS solver with a DRUNet denoiser** — the same closed-form data step with the prior as the only variable. Without noise the CNN prior wins by 3–6.5 dB; with noise the ordering appears to reverse, and §3.4 shows the reversal is a data-consistency projection rather than the prior.
+
 This is a **reproduction and extension, not a new method.** No claim of state of the art. The diffusion priors are pretrained and used at inference time only; nothing here is trained from scratch.
 
 **Why this project:** my PhD work is plug-and-play restoration — a denoiser used as an implicit prior inside an iterative solver (CVPR 2021, EUSIPCO 2025). DiffPIR keeps that skeleton and swaps the discriminative prior for a generative one, so it is the shortest honest path from what I already do to diffusion-based restoration.
@@ -14,6 +16,7 @@ This is a **reproduction and extension, not a new method.** No claim of state of
 |---|---|
 | **Step 1 — reproduction** | DiffPIR on SR ×4, Gaussian deblurring, random inpainting; paper's 100-image FFHQ validation split; PSNR / LPIPS vs published values → [§2](#2-step-1--reproduction-results) |
 | **Step 2 — extension** | Bayer CFA demosaicing + denoising via a channel-wise mask in the same closed-form data step; λ / ζ swept (36 runs), optimum explained, quality-vs-NFE curve → [§3](#3-step-2--bayer-demosaicing-extension) |
+| **Diffusion prior vs CNN prior** | the same solver with DRUNet in place of the diffusion model: **+6.54 / +3.12 dB for the CNN prior without noise**; with noise the ordering reverses by 2.3–2.5 dB, and that reversal turns out to be one data-consistency projection, not the prior → [§3.4](#34-baseline-drunet-pnp-hqs--the-comparison-that-isolates-the-prior) |
 | **Reproduction notes** | One implementation/paper discrepancy worth 2.7 dB, and two configuration traps → [§2.3](#23-one-discrepancy-between-the-released-code-and-the-paper), [§2.4](#24-two-configuration-traps) |
 | **How to run** | Environment, checkpoints, commands, data preparation → [§4](#4-how-to-run) |
 
@@ -22,10 +25,12 @@ This is a **reproduction and extension, not a new method.** No claim of state of
 | Path | |
 |---|---|
 | `main_ddpir_demosaic.py` | the demosaicing entry point — a copy of `main_ddpir_inpainting.py` differing in its mask and import |
+| `main_ddpir_demosaic_drunet.py` | the PnP-CNN baseline (§3.4): same mask, same data step, DRUNet prior on DPIR's HQS schedule. Needs three files from [DPIR](https://github.com/cszn/DPIR), see §4.2 |
 | `utils_inpaint.py` | → `utils/utils_inpaint.py`, adds `bayer_mask()` |
 | `make_crops.py` | builds the 256×256 even-origin crops for Kodak24 / McMaster |
 | `data/*/crops.csv` | the exact crop manifests (source file + box) for all 42 crops |
-| `scripts/` | the SLURM/cluster scripts the runs were produced with, plus `README-cluster.md` |
+| `scripts/` | the SLURM/cluster scripts every run here was produced with, plus `README-cluster.md` |
+| `scripts/61-make-sidebyside.py` | assembles the side-by-side visual comparison from the saved per-image outputs (numpy / matplotlib / Pillow only) |
 
 ---
 
@@ -101,7 +106,7 @@ This is a common situation in reproduction work and not a criticism of the autho
 
 ## 3. Step 2 — Bayer demosaicing extension
 
-> **Scope.** Everything below is this project's own result: the paper does not cover demosaicing, so there is no published λ / ζ to copy and no published number to match. One baseline is in place (classical CFA interpolation, §3.3); the PnP-CNN baseline that would isolate the prior is not — §3.3 says exactly what is missing.
+> **Scope.** Everything below is this project's own result: the paper does not cover demosaicing, so there is no published λ / ζ to copy and no published number to match. Two baselines are run on the same 42 crops through the same code: classical CFA interpolation (§3.3) and a DRUNet PnP-HQS solver (§3.4), the latter being the one that isolates the prior.
 
 ### 3.1 Formulation
 
@@ -175,11 +180,123 @@ The classical baseline runs through **the repository's own code path** — the s
 
 The 5.24 dB gap here is **not** a prior-versus-prior result: plain interpolation has no denoising at all, so the noise passes straight through. The honest reading is that σ > 0 requires a denoiser in the baseline — BM3D after interpolation, or the DRUNet PnP solver below.
 
-**Still missing — a DPIR-style PnP baseline**: the DRUNet denoiser in the *same* closed-form data step, on the *same* crops, which is the comparison that isolates the prior as the only variable (and prices the diffusion prior's NFE cost against a discriminative one). That is roughly a half-day of work and has not been done; no number here stands in for it. The side-by-side figure (ground truth / CFA input / classical / PnP-CNN / DiffPIR) waits on the same thing.
+That baseline — a denoiser in the same closed-form data step — is **§3.4**, and it answers the σ > 0 row properly.
+
+(The side-by-side visual comparison is assembled by `scripts/61-make-sidebyside.py` from the per-image outputs the runs already save; `scripts/42-download-results.sh` collects the five panels. It is not checked in yet.)
 
 > **Implementation note worth keeping.** OpenCV's Bayer constants are named off-by-one relative to sensor convention: an RGGB mosaic needs `COLOR_BayerBG2BGR`. The script does not rely on remembering that — it tries all four pattern codes on the first image and reports the table. The three wrong codes land at **8–9 dB** versus 24.9 dB for the right one, which doubles as an independent check that `bayer_mask()` has the phase right. At σ<sub>n</sub> = 0.05 the script selects plain bilinear over the edge-aware variant (23.25 vs 23.13 dB on image 1): edge-adaptive interpolation amplifies noise.
 
-### 3.4 Quality vs NFE
+### 3.4 Baseline: DRUNet PnP-HQS — the comparison that isolates the prior
+
+`main_ddpir_demosaic_drunet.py` is `main_ddpir_demosaic.py` with the prior swapped. The degradation (same `bayer_mask()`), the data sub-problem, the test crops and the PSNR / LPIPS path are unchanged; the diffusion model becomes **DRUNet** and the DDIM sampler becomes **DPIR's HQS schedule** (σ log-spaced 49 → max(0.6, 255σ<sub>n</sub>), ρ<sub>k</sub> = λσ<sub>y</sub>²/σ<sub>k</sub>²). So the prior is the only variable.
+
+**Implementation checks, all run rather than assumed:**
+
+- the σ / ρ schedule is **elementwise identical** to DPIR's `utils_pnp.get_rho_sigma(w=1.0)` (max abs diff 0.0);
+- DPIR's `masks_CFA_Bayer` is **elementwise identical** to this repository's `bayer_mask('RGGB')` — swapping the baseline in did not quietly change the degradation;
+- the initialiser is DPIR's `dm_matlab` (Malvar-He-Cutler), fed by a local `pack_cfa4()` that packs **the noisy measurement y**, not the clean image: calling `mosaic_CFA_Bayer` instead would let the initialiser see ground truth whenever σ > 0. Output matches `mosaic_CFA_Bayer`'s `CFA4` exactly (max diff 0.0) at σ = 0, and the initialiser is 5.8–6.5 dB above plain bilinear;
+- external corroboration: DPIR's own logs report Kodak **42.68** / McM **39.39** (full images, x8 on, border 10). Here, at **256 crops, x8 off, border 0**, the same solver gives 41.65 / 38.65 at 40 NFE — 0.7–1.0 dB lower, which is the direction and size those three differences should produce.
+
+#### 3.4.1 Comparison protocol
+
+| | Value | Why |
+|---|---|---|
+| NFE | **100 on both sides** | DiffPIR's recorded numbers are at 100. DRUNet is actually *better* at 40 (41.6334 vs 40.7698, Kodak σ = 0) — aligning the budget costs the baseline 0.86 dB, in DiffPIR's favour |
+| Data-consistency projection `x[mask] = y[mask]` | **`final` on both sides** (once, outside the loop) | DPIR projects every iteration (`loop`); DiffPIR projects once. The main table uses DiffPIR's convention for both |
+| λ | each tuned on its own: DRUNet **0.003**, DiffPIR **1** (σ = 0) / **3** (σ = 0.05) | both sides swept before being compared |
+| x8 self-ensemble | **off** (DPIR defaults it on) | DiffPIR does not self-ensemble |
+| border | **0** | as in every other number here (DPIR uses 10) |
+
+#### 3.4.2 Without noise, the CNN prior wins by a wide margin
+
+σ<sub>n</sub> = 0, 100 NFE, `dc = final`:
+
+| Dataset | DRUNet PnP | DiffPIR | Δ |
+|---|---|---|---|
+| Kodak24 (crops) | **40.7698** / **0.0253** | 34.2260 / 0.0800 | **+6.54 dB**, LPIPS **3.16×** better |
+| McMaster (crops) | **37.8258** / **0.0333** | 34.7081 / 0.0807 | **+3.12 dB**, LPIPS **2.42×** better |
+
+#### 3.4.3 With noise, the comparison reverses
+
+σ<sub>n</sub> = 12.75/255, everything else as above — but read §3.4.4 before this table, because the `final` projection is not doing the same thing on both sides:
+
+| Dataset | DRUNet PnP | DiffPIR | Δ |
+|---|---|---|---|
+| Kodak24 (crops) | 28.4093 / 0.2647 | **30.6704** / **0.1842** | **−2.26 dB** |
+| McMaster (crops) | 28.7395 / 0.2607 | **31.2000** / **0.1743** | **−2.46 dB** |
+
+#### 3.4.4 That reversal is the projection, not the prior
+
+With noise, `x[mask] = y[mask]` writes the **noisy measurement** back over pixels the denoiser has already cleaned. Dropping the projection (`DP_DC=none`):
+
+| Dataset | DRUNet `none` | gain over `final` | vs DiffPIR |
+|---|---|---|---|
+| Kodak24 (crops) | **30.6266** / 0.3491 | **+2.22 dB** | **−0.04 dB** |
+| McMaster (crops) | **31.0067** / 0.2718 | **+2.27 dB** | **−0.19 dB** |
+
+Two controls, and one piece of code, make this an explanation rather than a favourable choice of flag:
+
+1. **The same change is a loss when σ = 0** — 40.7228 vs 40.7698 on Kodak (−0.047), 37.7807 vs 37.8258 on McMaster (−0.045). With no noise the measurement *is* the truth and keeping it is right. Gain with noise, loss without, on both datasets.
+2. **The same change does nothing to DiffPIR** — 30.6704 → 30.6642 (−0.006) and 31.2000 → 31.1896 (−0.010), which is run-to-run sampling jitter.
+
+Control 2 has a mundane cause, and it is worth being exact about it. In `main_ddpir_demosaic.py` (inherited from upstream `main_ddpir_inpainting.py`) the image that gets scored is snapshotted *before* the projection:
+
+```python
+x_0 = (x / 2 + 0.5)                       # inside the sampling loop, a new tensor
+...
+if generate_mode in ['repaint', 'DiffPIR']:
+    x[mask.to(torch.bool)] = y[mask.to(torch.bool)]   # in-place on x, after the loop
+img_E = util.tensor2uint(x_0)             # x_0, not x
+```
+
+The write-back never reaches `img_E`. **So every DiffPIR number in this README is already a `dc = none` number**, whatever the flag says, while the baseline applies the projection where it is asked to (`x_0` is taken after it). The matched comparison is therefore `none` against `none` — the right-hand column above, where the two priors are **within 0.04–0.19 dB on PSNR** and the diffusion prior keeps a **1.56–1.90×** LPIPS lead. The 2.26 / 2.46 dB of §3.4.3 is the price of the projection, charged to whichever side performs it.
+
+Two consequences worth stating rather than hiding: the §3.4.2 noise-free rows compare DRUNet-with-projection against DiffPIR-without, which at σ = 0 costs DRUNet 0.045 dB (control 1) and does not touch the 3–6.5 dB conclusion; and `scripts/33-patch-dc.py`, which adds the `DP_DC` switch to the DiffPIR script, gates a line that was already inert.
+
+How much of DiffPIR's 30.67 dB is then noise it simply kept? An oracle on the same crops with the same seed — ground truth everywhere, noisy y at the sampled pixels — scores **30.9384** (Kodak) and **31.3503** (McMaster). DiffPIR lands **0.27 / 0.15 dB** under those ceilings, so at λ = 3 the data step leaves the sampled third essentially at its measured value: the noise is retained, not removed. Read that way the split is **94.0 % / 96.6 %** of the squared error sitting on the sampled third, with the other two thirds reconstructed at **41.14 / 44.12 dB**. ⚠️ That split is derived from the ceiling, not measured by masking the saved outputs; the direct check is one pass over the result PNGs and has not been run.
+
+#### 3.4.5 λ sweep for the baseline
+
+Kodak24, 100 NFE, seven values per configuration:
+
+| λ | σ=0 `final` | σ=0 `none` | σ=0.05 `final` | σ=0.05 `none` |
+|---|---|---|---|---|
+| **0.003** | **40.7698** | **40.7228** | **28.4093** | **30.6266** |
+| 0.01 | 40.7698 | 40.7226 | 28.3964 | 30.5972 |
+| 0.03 | 40.7695 | 40.7217 | 28.3596 | 30.5135 |
+| 0.1 | 40.7695 | 40.7199 | 28.2352 | 30.2371 |
+| 0.23 (DPIR's default) | 40.7692 | 40.7161 | 28.0228 | 29.7894 |
+| 1 | 40.7640 | 40.6880 | 27.0858 | 28.0253 |
+| 3 | 40.7250 | 40.5829 | 25.9671 | 26.1934 |
+
+All four configurations select λ = 0.003, and 0.01 → 0.003 moves PSNR by at most 0.03 dB, so the sweep has converged. Note the asymmetry: at σ = 0 the whole λ range spans **0.045 dB** — the same insensitivity DiffPIR shows at σ = 0, now measured on the baseline's own curve — while at σ = 0.05 it spans **2.44 dB** (`final`) to **4.43 dB** (`none`). λ was swept on Kodak only and transferred to McMaster unchanged, the same discipline as λ\* = 3 on the DiffPIR side.
+
+#### 3.4.6 Projection ablation, and one metric that disagrees
+
+40 NFE, λ = 0.23, run once:
+
+| | σ=0 Kodak | σ=0 McM | σ=0.05 Kodak |
+|---|---|---|---|
+| `loop` (DPIR: every iteration) | **41.6463** / 0.0235 | **38.6497** / 0.0294 | 28.3152 / 0.2692 |
+| `final` (DiffPIR: once) | 41.6334 / 0.0240 | 38.6481 / 0.0297 | 27.9126 / 0.2851 |
+| `none` | 41.5136 / 0.0344 | 38.5704 / 0.0405 | **29.5628** / 0.3857 |
+
+This answers the obvious question about §3.4.2 — whether the 6.54 dB comes from the baseline projecting 40 times instead of once. `loop` versus `final` is **0.013 dB** on Kodak and **0.002 dB** on McMaster, and the main table uses `final` anyway.
+
+It also shows **PSNR and LPIPS ranking the same operation in opposite directions** once there is noise: projecting costs PSNR but improves LPIPS (0.3857 → 0.2851 / 0.2692 on Kodak at σ = 0.05). Writing raw measurements back injects high-frequency content; it is noise, but VGG features read it as detail. At σ = 0 the two metrics agree, because what gets written back is the truth.
+
+#### 3.4.7 Cost, and what this does not show
+
+One GH200, 24 crops at 256×256: DRUNet **≈0.42 s/image** at 100 NFE against DiffPIR's **≈3.8 s/image**, roughly **9×**. ⚠️ Both are *solved out of* two wall-clock measurements at different batch sizes rather than timed directly; treat them as order-of-magnitude.
+
+- DRUNet is better at **40** NFE than at the 100 it was aligned to, so the baseline reaches these numbers at 2.5× less compute than reported here.
+- Whether DiffPIR's 100 NFE is its own ceiling was **not tested** — §3.5's curve is still climbing steeply from 20 to 100. Nothing here supports "the diffusion prior has run out".
+- One prior, one task, two 42-crop datasets, one noise level. Each row is reproduced on both datasets, which is what it is worth — not a general statement about diffusion priors.
+- The σ = 0.05 error split in §3.4.4 is inferred from the oracle ceiling, not measured directly on the output images.
+
+**The three-line summary:** without noise the discriminative prior wins by 3–6.5 dB at equal NFE; with 5 % noise and a data-consistency projection in the loop that ordering reverses by 2.3–2.5 dB; and once both sides skip the projection the two priors are level on PSNR to within 0.2 dB. What survives is the LPIPS gap — **the diffusion prior's advantage here is perceptual, not fidelity, and only with noise present**.
+
+### 3.5 Quality vs NFE
 
 Kodak24 crops, **operating point held fixed** at λ = 3 / ζ = 1.0:
 
@@ -192,6 +309,8 @@ Kodak24 crops, **operating point held fixed** at λ = 3 / ζ = 1.0:
 Halving the budget from 100 to 50 costs **1.17 dB**; going to 20 costs **3.35 dB** against the full budget.
 
 ⚠️ These are *the fixed operating point evaluated at lower NFE*, not a per-NFE re-optimised λ — the optimum was swept at 100 NFE. A per-NFE sweep would likely recover part of the gap and is not claimed here.
+
+⚠️ Read the absolute values with §3.4.4 in hand: at σ<sub>n</sub> = 0.05 these runs sit within 0.3 dB of the ceiling set by keeping the measured pixels at their noisy values, so most of the remaining squared error is retained measurement noise rather than reconstruction error. **The shape of the curve — what NFE costs — stands; the level is held up by the noise floor, not by the prior.**
 
 This is the practical point of the whole extension. A discriminative denoiser prior converges in on the order of 10–20 iterations; a diffusion prior is charged roughly one network evaluation per step and defaults to 100. On-device deployment is exactly where that difference is paid.
 
@@ -221,7 +340,10 @@ Memory is a non-issue at 256×256; 96 GB is far more than this needs.
 ```
 model_zoo/256x256_diffusion_uncond.pt   # OpenAI guided-diffusion, ImageNet 256×256 (general images)
 model_zoo/diffusion_ffhq_10m.pt         # FFHQ faces — used for all Step 1 numbers above
+model_zoo/drunet_color.pth              # DRUNet, for the §3.4 baseline only (125 MB, from cszn/DPIR)
 ```
+
+The DRUNet baseline also needs three files from [DPIR](https://github.com/cszn/DPIR) dropped into the DiffPIR tree: `models/network_unet.py`, `models/basicblock.py` and `utils/utils_mosaic.py`. `scripts/41-upload-drunet.sh` copies all four into place (and checks the md5 of the entry point afterwards — a stale manual copy once produced four identical result groups before that check existed).
 
 ⚠️ The upstream `download.sh` does not check whether a file already exists and will re-download over it. An interrupted re-download truncated a complete 2.1 GB checkpoint to 190 MB. Run `ls -lh model_zoo/` first.
 
@@ -240,6 +362,7 @@ python main_ddpir_deblur.py        # Gaussian / motion deblurring
 python main_ddpir_sisr.py          # ×4 super-resolution
 python main_ddpir_inpainting.py    # random / box inpainting
 python main_ddpir_demosaic.py      # Bayer CFA demosaicing (this work)
+python main_ddpir_demosaic_drunet.py   # the same, with a DRUNet prior (§3.4 baseline)
 ```
 
 `main_ddpir_demosaic.py` takes its six run parameters from the environment, so a sweep is a loop over submissions rather than an edited file (`scripts/31-patch-env.py` applies the same change to a stock checkout):
@@ -248,6 +371,28 @@ python main_ddpir_demosaic.py      # Bayer CFA demosaicing (this work)
 DP_TESTSET=kodak24_c256 DP_MODEL=256x256_diffusion_uncond \
 DP_SIGMA=0.05 DP_NFE=100 DP_LAMBDA=3 DP_ZETA=1.0 \
 python main_ddpir_demosaic.py        # the §3.2 operating point
+```
+
+The baseline reads the same variables plus `DP_DC` (`loop` / `final` / `none`, the data-consistency projection of §3.4.4 and §3.4.6) and `DP_X8`:
+
+```bash
+DP_TESTSET=kodak24_c256 DP_SIGMA=0.05 DP_NFE=100 DP_LAMBDA=0.003 DP_DC=none \
+python main_ddpir_demosaic_drunet.py            # the §3.4.4 "none" row
+
+python scripts/33-patch-dc.py                   # gives main_ddpir_demosaic.py the same DP_DC switch
+```
+
+`scripts/33-patch-dc.py` is idempotent and backs the file up before editing; the sweeps themselves are `scripts/32-…`, `33-…`, `34-…`, `35-…` (λ lists overridable through `DP_LAMBDAS`).
+
+The side-by-side figure is assembled from the per-image PNGs the runs already write (`save_E = True`):
+
+```bash
+# on the cluster: the classical baseline does not save images unless asked
+python 50-classical-baseline.py --testset kodak24_c256 --sigma 0.05 \
+       --save-dir results/classical_kodak24_c256_sigma0.05
+# locally: collect the five panels, then compose
+bash   scripts/42-download-results.sh kodim19 kodak24_c256 0.05
+python scripts/61-make-sidebyside.py --help
 ```
 
 Key `configs/sisr.yaml` values for the reproduction (defaults, intentionally unchanged):
@@ -289,8 +434,9 @@ Built on **DiffPIR** by Yuanzhi Zhu, Kai Zhang, Jingyun Liang, Jiezhang Cao, Bih
 **Scope, stated plainly:**
 - This is a reproduction plus one added task. It is **not a new method and not a claim of state of the art**.
 - The diffusion models are **pretrained and used at inference time**. I did not train a diffusion model.
-- Step 1 reproduces published numbers; Step 2 is my own extension. It is compared against classical CFA interpolation on identical crops (§3.3); the **PnP-CNN baseline that would isolate the prior has not been run**, and §3.3 says so rather than substituting something else for it.
+- Step 1 reproduces published numbers; Step 2 is my own extension, compared against classical CFA interpolation (§3.3) and a DRUNet PnP-HQS solver (§3.4) on identical crops through identical code. **The comparison in §3.4 goes against the diffusion prior on PSNR**; it is reported as it came out, including the controls that explain it.
+- The DRUNet baseline borrows four files from [DPIR](https://github.com/cszn/DPIR) (Zhang et al., *Plug-and-Play Image Restoration with Deep Denoiser Prior*, TPAMI 2021), also MIT-licensed.
 
-Modifications to upstream files are confined to: the kernel-std fix (§2.3), `bayer_mask()` in `utils_inpaint.py`, `main_ddpir_demosaic.py` (a copy of `main_ddpir_inpainting.py` differing only in its import and mask), and the torch-2.13 compatibility edits in §4.5.
+Modifications to upstream files are confined to: the kernel-std fix (§2.3), `bayer_mask()` in `utils_inpaint.py`, `main_ddpir_demosaic.py` (a copy of `main_ddpir_inpainting.py` differing only in its import and mask), `main_ddpir_demosaic_drunet.py` (that file again with the prior replaced), and the torch-2.13 compatibility edits in §4.5.
 
 Author: Wenzhu Xing.
