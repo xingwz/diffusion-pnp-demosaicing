@@ -31,6 +31,7 @@ This is a **reproduction and extension, not a new method.** No claim of state of
 | `data/*/crops.csv` | the exact crop manifests (source file + box) for all 42 crops |
 | `scripts/` | the SLURM/cluster scripts every run here was produced with, plus `README-cluster.md` |
 | `scripts/61-make-sidebyside.py` | assembles the side-by-side visual comparison from the saved per-image outputs (numpy / matplotlib / Pillow only) |
+| `scripts/62-error-budget.py` | splits a run's squared error by the Bayer mask — the §3.4.4 table |
 
 ---
 
@@ -267,7 +268,21 @@ The write-back never reaches `img_E`. **So every DiffPIR number in this README i
 
 Two consequences worth stating rather than hiding: the §3.4.2 noise-free rows compare DRUNet-with-projection against DiffPIR-without, which at σ = 0 costs DRUNet 0.045 dB (control 1) and does not touch the 3–6.5 dB conclusion; and `scripts/33-patch-dc.py`, which adds the `DP_DC` switch to the DiffPIR script, gates a line that was already inert.
 
-How much of DiffPIR's 30.67 dB is then noise it simply kept? An oracle on the same crops with the same seed — ground truth everywhere, noisy y at the sampled pixels — scores **30.9384** (Kodak) and **31.3503** (McMaster). DiffPIR lands **0.27 / 0.15 dB** under those ceilings, so at λ = 3 the data step leaves the sampled third essentially at its measured value: the noise is retained, not removed. Read that way the split is **94.0 % / 96.6 %** of the squared error sitting on the sampled third, with the other two thirds reconstructed at **41.14 / 44.12 dB**. ⚠️ That split is derived from the ceiling, not measured by masking the saved outputs; the direct check is one pass over the result PNGs and has not been run.
+So where does the error actually sit? Splitting each method's squared error by the mask (`scripts/62-error-budget.py`, 24 Kodak crops, σ = 0.05, neither side projecting; MSE in [0, 255] units):
+
+| | avg PSNR | error on the sampled 1/3 | error on the reconstructed 2/3 | share of total error on the sampled 1/3 |
+|---|---|---|---|---|
+| the measurement y itself | — | 157.59 → 26.16 dB | — | — |
+| DiffPIR, λ = 3 | 30.6642 | **51.24 → 31.03 dB** | 71.12 → 29.61 dB | **26.5 %** |
+| DRUNet, λ = 0.003 | 30.6266 | 62.65 → 30.16 dB | **65.97 → 29.94 dB** | 32.2 % |
+
+Three things fall out, and the first one corrects what the numbers alone suggested:
+
+1. **DiffPIR does denoise the pixels it was given** — 157.59 → 51.24, i.e. it removes **4.88 dB (67 %)** of the noise energy there, slightly more than DRUNet's 4.01 dB (60 %). The intuition that a near-unchanged result under §3.4.4's flag meant "the measurement passes through untouched" was wrong; the flag was simply inert.
+2. **Most of the error is not the noise.** Roughly three quarters of it (73.5 % for DiffPIR, 67.8 % for DRUNet) sits on the two thirds of the samples that had to be reconstructed, where both land near 29.6–29.9 dB.
+3. **The two priors divide the work differently.** The diffusion prior is better on the measured third and worse on the reconstructed two thirds; the discriminative one is the reverse. Their average PSNRs differ by 0.04 dB because those two effects nearly cancel — which is worth knowing before reading any single PSNR as a verdict on a prior.
+
+The same split, run at σ = 0, is also what pins down the code reading above: DRUNet with `dc = final` has **exactly 0.00** error on the sampled pixels (the projection writes ground truth back, as intended), while DiffPIR with the same flag has **1.69** — the projection never reached its output.
 
 #### 3.4.5 λ sweep for the baseline
 
@@ -306,7 +321,7 @@ One GH200, 24 crops at 256×256: DRUNet **≈0.42 s/image** at 100 NFE against D
 - DRUNet is better at **40** NFE than at the 100 it was aligned to, so the baseline reaches these numbers at 2.5× less compute than reported here.
 - Whether DiffPIR's 100 NFE is its own ceiling was **not tested** — §3.5's curve is still climbing steeply from 20 to 100. Nothing here supports "the diffusion prior has run out".
 - One prior, one task, two 42-crop datasets, one noise level. Each row is reproduced on both datasets, which is what it is worth — not a general statement about diffusion priors.
-- The σ = 0.05 error split in §3.4.4 is inferred from the oracle ceiling, not measured directly on the output images.
+- The error split in §3.4.4 is measured on Kodak24 only; McMaster was not re-split.
 
 **The three-line summary:** without noise the discriminative prior wins by 3–6.5 dB at equal NFE; with 5 % noise and a data-consistency projection in the loop that ordering reverses by 2.3–2.5 dB; and once both sides skip the projection the two priors are level on PSNR to within 0.2 dB. What survives is the LPIPS gap — **the diffusion prior's advantage here is perceptual, not fidelity, and only with noise present**.
 
@@ -324,7 +339,7 @@ Halving the budget from 100 to 50 costs **1.17 dB**; going to 20 costs **3.35 dB
 
 ⚠️ These are *the fixed operating point evaluated at lower NFE*, not a per-NFE re-optimised λ — the optimum was swept at 100 NFE. A per-NFE sweep would likely recover part of the gap and is not claimed here.
 
-⚠️ Read the absolute values with §3.4.4 in hand: at σ<sub>n</sub> = 0.05 these runs sit within 0.3 dB of the ceiling set by keeping the measured pixels at their noisy values, so most of the remaining squared error is retained measurement noise rather than reconstruction error. **The shape of the curve — what NFE costs — stands; the level is held up by the noise floor, not by the prior.**
+⚠️ Read the absolute values with §3.4.4 in hand: at σ<sub>n</sub> = 0.05 a quarter of the squared error is residual noise on the third of the pixels that were measured, and the solver starts from a 26.16 dB measurement, so the level of this curve is not a reconstruction score. **What the curve is good for is its shape — the price of cutting NFE at a fixed operating point.**
 
 This is the practical point of the whole extension. A discriminative denoiser prior converges in on the order of 10–20 iterations; a diffusion prior is charged roughly one network evaluation per step and defaults to 100. On-device deployment is exactly where that difference is paid.
 
