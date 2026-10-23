@@ -23,7 +23,7 @@ LOCAL="$(cd "$(dirname "$0")/.." && pwd)/results-for-figure/${TESTSET}_sigma${SI
 
 DIR_CLASSICAL="${DP_DIR_CLASSICAL:-results/classical_${TESTSET}_sigma${SIGMA}}"
 # 下面两个是 result_name 的通配：testset_任务_..._sigma..._NFE..._lambda...
-DIR_DRUNET="${DP_DIR_DRUNET:-results/${TESTSET}_demosaic_*drunet*sigma${SIGMA}*dcnone}"
+DIR_DRUNET="${DP_DIR_DRUNET:-results/${TESTSET}_demosaic_*drunet*sigma${SIGMA}_NFE100_lambda0.003_x8False_dcnone}"
 DIR_DIFFPIR="${DP_DIR_DIFFPIR:-results/${TESTSET}_demosaic_*256x256_diffusion_uncond_sigma${SIGMA}*NFE100*lambda3.0*}"
 
 mkdir -p "$LOCAL"

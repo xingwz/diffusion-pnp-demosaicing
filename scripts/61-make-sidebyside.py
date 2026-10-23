@@ -77,7 +77,11 @@ def main():
     ap.add_argument("--classical")
     ap.add_argument("--drunet")
     ap.add_argument("--diffpir")
-    ap.add_argument("--zoom", default=None, help="x,y,size of the inset box (default: centre, 64 px)")
+    ap.add_argument("--zoom", default="auto",
+                    help="x,y,size of the inset box, or 'auto' (default): the 64 px window of the "
+                         "ground truth with the most gradient energy, which is where CFA artefacts live")
+    ap.add_argument("--cfa-label", default="CFA input (mosaicked + noise)",
+                    help="pass 'CFA input (mosaicked)' for a noise-free figure")
     ap.add_argument("--title", default=None)
     ap.add_argument("--out", required=True)
     ap.add_argument("--dpi", type=int, default=160)
@@ -104,15 +108,27 @@ def main():
         if im.shape[:2] != (h, w):
             raise SystemExit("%s is %s, ground truth is %s" % (sources[key], im.shape[:2], (h, w)))
         print("  + %-10s %s" % (key, os.path.relpath(sources[key])))
+        if key == "cfa":
+            label = args.cfa_label
         imgs.append(im)
         labels.append("%s\n%.2f dB" % (label, psnr(im, gt)) if has_ref else label)
         scored.append(key)
 
-    if args.zoom:
-        zx, zy, zs = (int(v) for v in args.zoom.split(","))
-    else:
+    if args.zoom == "auto":
         zs = 64
-        zx, zy = (w - zs) // 2, (h - zs) // 2
+        g = np.abs(np.diff(gt.astype(np.float32).mean(2), axis=0)[:, :-1]) \
+            + np.abs(np.diff(gt.astype(np.float32).mean(2), axis=1)[:-1, :])
+        energy = np.cumsum(np.cumsum(g, 0), 1)
+        energy = np.pad(energy, ((1, 0), (1, 0)))
+        best, zx, zy = -1.0, 0, 0
+        for y in range(0, h - zs, 8):
+            for x in range(0, w - zs, 8):
+                e = energy[y + zs, x + zs] - energy[y, x + zs] - energy[y + zs, x] + energy[y, x]
+                if e > best:
+                    best, zx, zy = e, x, y
+        print("  auto zoom: %d,%d,%d" % (zx, zy, zs))
+    else:
+        zx, zy, zs = (int(v) for v in args.zoom.split(","))
     if zx < 0 or zy < 0 or zx + zs > w or zy + zs > h:
         raise SystemExit("zoom box %s falls outside the %dx%d image" % ((zx, zy, zs), w, h))
 

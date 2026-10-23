@@ -216,6 +216,10 @@ That baseline — a denoiser in the same closed-form data step — is **§3.4**,
 | Kodak24 (crops) | **40.7698** / **0.0253** | 34.2260 / 0.0800 | **+6.54 dB**, LPIPS **3.16×** better |
 | McMaster (crops) | **37.8258** / **0.0333** | 34.7081 / 0.0807 | **+3.12 dB**, LPIPS **2.42×** better |
 
+![kodim16 without noise: ground truth, CFA input, classical interpolation, DRUNet PnP and DiffPIR](figures/sidebyside-sigma0-kodim16.png)
+
+With no noise to remove, DRUNet reconstructs the crop at 43.11 dB — the inset is hard to tell from the ground truth — while the diffusion prior sits 8.85 dB below it and visibly redraws the fronds rather than recovering them. Classical interpolation (29.94 dB) shows the characteristic colour fringing on the same high-frequency structure. **Compare this inset with the same crop under noise in §3.4.3, where the ordering flips: there it is DRUNet that loses the fronds.**
+
 #### 3.4.3 With noise, the comparison reverses
 
 σ<sub>n</sub> = 12.75/255, everything else as above — but read §3.4.4 before this table, because the `final` projection is not doing the same thing on both sides:
@@ -224,6 +228,16 @@ That baseline — a denoiser in the same closed-form data step — is **§3.4**,
 |---|---|---|---|
 | Kodak24 (crops) | 28.4093 / 0.2647 | **30.6704** / **0.1842** | **−2.26 dB** |
 | McMaster (crops) | 28.7395 / 0.2607 | **31.2000** / **0.1743** | **−2.46 dB** |
+
+What the LPIPS column looks like. Both figures are the matched setting of §3.4.4 — neither side projects — with the inset placed automatically on the highest-gradient window of the crop:
+
+![kodim16: ground truth, CFA input, classical interpolation, DRUNet PnP and DiffPIR at sigma 0.05](figures/sidebyside-sigma005-kodim16.png)
+
+PSNR separates these two by 0.30 dB (30.46 vs 30.76) and LPIPS by 0.28 (0.490 vs 0.208). The inset says which number is describing the picture: DRUNet dissolves the palm fronds into smooth blobs, the diffusion prior keeps them as fronds. Classical interpolation has no denoiser, so it is still carrying the noise.
+
+![kodim19: the same five panels on the lighthouse crop](figures/sidebyside-sigma005-kodim19.png)
+
+On the picket fence the classical panel breaks into colour moiré — the failure mode a mask-type operator produces on a periodic structure — while both learned priors resolve the pickets, the diffusion prior with slightly harder edges (30.66 vs 30.08 dB, LPIPS 0.146 vs 0.330).
 
 #### 3.4.4 That reversal is the projection, not the prior
 
